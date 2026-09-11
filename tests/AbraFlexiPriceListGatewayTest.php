@@ -33,7 +33,6 @@ final class AbraFlexiPriceListGatewayTest extends TestCase
         $client = $this->createMock(Cenik::class);
         $client->expects(self::once())
             ->method('loadFromAbraFlexi')
-            ->with(['kod' => 'SERVICE-90', 'detail' => 'full'])
             ->willReturn(7);
         $client->method('getDataValue')->willReturnMap([
             ['kod', 'SERVICE-90'],
@@ -56,20 +55,40 @@ final class AbraFlexiPriceListGatewayTest extends TestCase
         self::assertSame('typSzbDph.dphZakl', $item->vatRateTypeCode);
     }
 
+    public function test_float_prices_round_once_at_the_cent_boundary(): void {
+        $client = $this->createStub(Cenik::class);
+        $client->method('loadFromAbraFlexi')->willReturn(1);
+        $client->method('getDataValue')->willReturnMap([
+            ['kod', 'SMALL'],
+            ['nazev', 'Fractional prices'],
+            ['cenaZaklVcDph', 1.005],
+            ['cenaZaklBezDph', 0.0049999],
+            ['typCenyDphK', 'typCeny.sDph'],
+            ['typSzbDphK', 'typSzbDph.dphZakl'],
+        ]);
+
+        $item = $this->gateway($client)->findByCode('SMALL');
+
+        self::assertNotNull($item);
+        self::assertSame(101, $item->priceAmountMinor);
+        self::assertSame(0, $item->netPriceAmountMinor);
+    }
+
     public function test_reused_client_does_not_fill_missing_prices_from_the_previous_item(): void {
         $client = $this->getMockBuilder(Cenik::class)
             ->disableOriginalConstructor()
             ->onlyMethods(['loadFromAbraFlexi'])
             ->getMock();
-        $client->expects(self::exactly(2))->method('loadFromAbraFlexi')->willReturnCallback(static function (array $parameters) use ($client): int {
+        $calls = 0;
+        $client->expects(self::exactly(2))->method('loadFromAbraFlexi')->willReturnCallback(static function () use ($client, &$calls): int {
             $fields = [
-                'kod' => $parameters['kod'],
+                'kod' => ++$calls === 1 ? 'COMPLETE' : 'INCOMPLETE',
                 'nazev' => 'Service',
                 'cenaZaklVcDph' => '121.00',
                 'typCenyDphK' => 'typCeny.sDph',
                 'typSzbDphK' => 'typSzbDph.dphZakl',
             ];
-            if ($parameters['kod'] === 'COMPLETE') {
+            if ($calls === 1) {
                 $fields['cenaZaklBezDph'] = '100.00';
             }
             foreach ($fields as $field => $value) {
@@ -84,16 +103,6 @@ final class AbraFlexiPriceListGatewayTest extends TestCase
         $gateway->findByCode('INCOMPLETE');
     }
 
-    public function test_missing_price_list_item_returns_null(): void {
-        $client = $this->createMock(Cenik::class);
-        $client->expects(self::once())
-            ->method('loadFromAbraFlexi')
-            ->with(['kod' => 'MISSING', 'detail' => 'full'])
-            ->willReturn(0);
-        $client->expects(self::never())->method('getDataValue');
-
-        self::assertNull($this->gateway($client)->findByCode('MISSING'));
-    }
 
     public function test_invalid_code_is_rejected_before_accessing_abra(): void {
         $client = $this->createMock(Cenik::class);

@@ -297,6 +297,18 @@ final class AbraFlexiInvoiceGatewayTest extends TestCase
         self::assertSame(481, $invoice->internalId);
     }
 
+    public function test_quantity_with_a_trailing_newline_is_rejected_before_writing(): void {
+        $client = $this->createMock(FakturaVydana::class);
+        $client->expects(self::never())->method('sync');
+
+        try {
+            $this->gateway($client)->issue($this->request(quantity: "1\n"));
+            self::fail('A malformed quantity must not reach ABRA.');
+        } catch (InvoiceGatewayException $exception) {
+            self::assertSame(InvoiceGatewayFailure::RejectedRequest, $exception->failure);
+        }
+    }
+
     #[DataProvider('validExternalIds')]
     public function test_external_identity_is_opaque_and_preserved_exactly(string $externalId): void {
         $client = $this->createMock(FakturaVydana::class);
@@ -824,6 +836,7 @@ final class AbraFlexiInvoiceGatewayTest extends TestCase
         string $externalId = 'ext:Accounting_Bridge:document.2026-0042:invoice',
         string $orderNumber = 'INV 2026/0042',
         string $paymentReference = '0042',
+        string $quantity = '1',
     ): IssueInvoiceRequest {
         return new IssueInvoiceRequest(
             orderNumber: $orderNumber,
@@ -841,7 +854,7 @@ final class AbraFlexiInvoiceGatewayTest extends TestCase
             paymentReference: $paymentReference,
             lines: [new IssueInvoiceLine(
                 description: 'Consulting 90 minutes',
-                quantity: '1',
+                quantity: $quantity,
                 unitCode: $inheritDefaults ? null : 'KS',
                 unitPriceMinor: 99000,
                 netAmountMinor: 81818,

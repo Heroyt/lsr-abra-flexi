@@ -77,7 +77,7 @@ final class AbraFlexiClientFactoryTest extends TestCase
             proc_close(self::$server);
             self::$server = null;
         }
-        foreach (['openssl.cnf', 'server.pem', 'stderr.log'] as $file) {
+        foreach (['openssl.cnf', 'server.pem', 'stderr.log', 'trace-stderr.log'] as $file) {
             if (is_file(self::$directory . '/' . $file)) {
                 unlink(self::$directory . '/' . $file);
             }
@@ -208,6 +208,18 @@ final class AbraFlexiClientFactoryTest extends TestCase
         self::assertSame(12100, $gateway->findByCode('ALIAS')?->priceAmountMinor);
     }
 
+    public function test_price_filter_syntax_is_treated_as_a_literal_code(): void {
+        $client = $this->client(priceList: true);
+        self::assertInstanceOf(Cenik::class, $client);
+        $gateway = new AbraFlexiPriceListGateway($this->configuration(), new NullLogger(), $client);
+
+        $item = $gateway->findByCode("service' or kod ne 'other");
+
+        self::assertNotNull($item);
+        self::assertSame("service' or kod ne 'other", $item->code);
+        self::assertSame(12100, $item->priceAmountMinor);
+    }
+
     public function test_real_sdk_creates_reads_and_downloads_invoice_without_losing_order_number(): void {
         $client = $this->client();
         self::assertInstanceOf(FakturaVydana::class, $client);
@@ -294,13 +306,13 @@ final class AbraFlexiClientFactoryTest extends TestCase
             $production === null ? 'undefined' : ($production ? 'production' : 'development'),
             $enabled ? 'enabled' : 'disabled',
             self::$origin, self::$directory . '/server.pem',
-        ], [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']], $pipes);
+        ], [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['file', self::$directory . '/trace-stderr.log', 'w']], $pipes);
         self::assertIsResource($process);
         $output = stream_get_contents($pipes[1]);
-        $errors = stream_get_contents($pipes[2]);
         fclose($pipes[1]);
-        fclose($pipes[2]);
-        self::assertSame(0, proc_close($process), (string) $errors);
+        $status = proc_close($process);
+        $errors = file_get_contents(self::$directory . '/trace-stderr.log');
+        self::assertSame(0, $status, (string) $errors);
         self::assertSame('', $errors, 'Raw cURL debug output must not reach stderr.');
         $result = json_decode((string) $output, true, flags: JSON_THROW_ON_ERROR);
         self::assertSame(42, $result['id']);

@@ -107,16 +107,19 @@ final class AbraRedirectServer
                 ++$invoiceWrites;
                 $status = 201;
                 $data = ['winstrom' => ['success' => 'true', 'results' => [['id' => 481]]]];
-            } elseif (preg_match("~^/c/test_company/cenik/\\(kod eq '([^']+)'\\)(?:\\.json)?$~", $path, $matches) === 1) {
-                $data = ['winstrom' => ['cenik' => $matches[1] === 'ALIAS' ? [[
-                    'id' => 42,
-                    'kod' => 'ALIAS',
-                    'nazev' => 'Fixture catalogue item',
+            } elseif (preg_match('~^/c/test_company/cenik/code:MISSING(?:\.json)?$~', $path) === 1) {
+                $status = 404;
+                $data = ['winstrom' => ['success' => 'false']];
+            } elseif (preg_match("~^/c/test_company/cenik/code:service' or kod ne 'other(?:\\.json)?$~", $path) === 1) {
+                $data = ['winstrom' => ['cenik' => [[
+                    'id' => 43,
+                    'kod' => "service' or kod ne 'other",
+                    'nazev' => 'Literal code catalogue item',
                     'cenaZaklVcDph' => '121.00',
                     'cenaZaklBezDph' => '100.00',
                     'typCenyDphK' => 'typCeny.sDph',
                     'typSzbDphK' => 'typSzbDph.dphZakl',
-                ]] : []]];
+                ]]]];
             } elseif ($path === '/invoice-state') {
                 $data = ['invoice' => $invoice, 'writes' => $invoiceWrites];
             } elseif (preg_match('~^/c/test_company/(faktura-vydana|cenik)/(?:code:ALIAS|ext:Accounting_Bridge:alias\.12:invoice)(?:\.json)?$~', $path) === 1) {
@@ -136,7 +139,17 @@ final class AbraRedirectServer
             } elseif ($path === '/c/test_company/faktura-vydana/481.pdf') {
                 $pdf = $invoicePdf;
             } elseif (preg_match('~^/c/test_company/(faktura-vydana|cenik)/42\.json$~', $path, $matches) === 1) {
-                $data = ['winstrom' => [$matches[1] => [['id' => 42, 'kod' => 'ALIAS']]]];
+                $record = ['id' => 42, 'kod' => 'ALIAS'];
+                if ($matches[1] === 'cenik') {
+                    $record += [
+                        'nazev' => 'Fixture catalogue item',
+                        'cenaZaklVcDph' => '121.00',
+                        'cenaZaklBezDph' => '100.00',
+                        'typCenyDphK' => 'typCeny.sDph',
+                        'typSzbDphK' => 'typSzbDph.dphZakl',
+                    ];
+                }
+                $data = ['winstrom' => [$matches[1] => [$record]]];
             } elseif (preg_match('~^/redirect/(301|302|303|307|308)$~', $path, $matches) === 1) {
                 $status = (int) $matches[1];
                 $location = '/echo';
