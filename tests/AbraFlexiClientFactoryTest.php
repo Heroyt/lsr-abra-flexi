@@ -132,6 +132,19 @@ final class AbraFlexiClientFactoryTest extends TestCase
         self::assertTrue($echo['authorized']);
     }
 
+    public function test_relative_redirect_accepts_inherited_authentication_metadata(): void {
+        $client = $this->client();
+        // Older libcurl versions add USERPWD credentials to the effective URL after a redirect.
+        // Seed that metadata on the initial URL to exercise the same state on newer versions.
+        $url = str_replace('https://', 'https://api-user:api-password@', self::$origin) . '/relative/start';
+        $client->doCurlRequest($url, 'GET');
+
+        self::assertSame(200, $client->lastResponseCode);
+        $echo = json_decode($client->lastCurlResponse, true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame('GET', $echo['method']);
+        self::assertTrue($echo['authorized']);
+    }
+
     #[DataProvider('unsafeRedirects')]
     public function test_unsafe_redirect_is_blocked_before_forwarding_invoice_data(string $path): void {
         $client = $this->client();
