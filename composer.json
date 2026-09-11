@@ -1,5 +1,6 @@
 {
   "name": "lsr/abra-flexi",
+  "version": "0.1.0",
   "description": "Typed ABRA Flexi invoice and price-list adapters with guarded SDK transport and Nette DI integration.",
   "type": "library",
   "license": "MIT",

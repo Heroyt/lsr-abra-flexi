@@ -16,14 +16,13 @@ The package issues invoices, looks them up by an application-supplied external I
 
 ## Installation
 
-For local integration before publishing a release, register this checkout as a Composer path repository in the consuming application. Replace the example path with the actual package directory:
+Install the released package from Packagist:
 
 ```shell
-composer config repositories.abra-flexi '{"type":"path","url":"/absolute/path/to/lsr-abra-flexi","options":{"symlink":true}}'
-composer require lsr/abra-flexi:dev-main
+composer require lsr/abra-flexi:^0.1.0
 ```
 
-This symlinks the working package into the application. Do not deploy an application with a workstation-specific path repository. Once a release is published, remove the temporary repository and require its released version from the configured Composer repository instead. These instructions do not imply that the package has already been published.
+No sibling checkout or custom Composer repository is required. For local package development, use a temporary Composer path repository with symlinking and `dev-main`; remove that override and reinstall the released version before deployment.
 
 ## Nette DI
 
