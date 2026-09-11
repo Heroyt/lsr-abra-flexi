@@ -1,0 +1,34 @@
+# Include this file from application-owned Nette DI configuration.
+# Supply credentials through application parameters/environment integration;
+# this package never reads environment variables or enables access implicitly.
+# For runtime injection, register abraUsername/abraPassword as dynamic parameters
+# with Nette's ParametersExtension before compiling the container.
+extensions:
+    abraFlexi: Lsr\AbraFlexi\Di\AbraFlexiExtension
+
+parameters:
+    abraUsername: ''
+    abraPassword: ''
+
+abraFlexi:
+    enabled: false
+    apiUrl: 'https://accounting.example.test'
+    company: 'company'
+    username: %abraUsername%
+    password: %abraPassword%
+    # Domestic currency with two decimal places; no foreign-currency conversion.
+    currencyCode: CZK
+    timeout: 30
+    verifyTls: true
+    traceCurl: false
+    pdfReportName: null
+    pdfLanguage: null
+    # Use an existing PSR-3 logger; otherwise a single LoggerInterface must autowire.
+    logger: '@logger'
+
+# Registered types: AbraFlexiConfiguration, AbraFlexiClientFactory,
+# AbraFlexiInvoiceGateway, AbraFlexiPriceListGateway in Lsr\AbraFlexi.
+# Document type, number series, payment/account codes, and dates are request
+# fields. Null optional fields are omitted so ABRA's document defaults apply.
+# Purchase IDs, role policy, retry scheduling, PDF storage, and delivery belong
+# to the application. Never log or dump the configuration or SDK client objects.
