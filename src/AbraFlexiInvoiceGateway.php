@@ -122,6 +122,7 @@ final class AbraFlexiInvoiceGateway
                 );
             }
             $this->assertExternalId($client, $externalId);
+            $format = $client->format;
 
             try {
                 $this->resetResponseDiagnostics($client);
@@ -136,6 +137,19 @@ final class AbraFlexiInvoiceGateway
                     'The ABRA Flexi invoice PDF could not be downloaded.',
                     $exception,
                 );
+            } finally {
+                // The SDK only restores its format when getInFormat() returns normally.
+                if ($client->format !== $format) {
+                    try {
+                        $restored = $client->setFormat($format);
+                    } catch (Throwable) {
+                        $restored = false;
+                    }
+                    if ( ! $restored) {
+                        // Never retain poisoned state or replace the original download failure.
+                        $this->client = null;
+                    }
+                }
             }
             if ( ! is_string($bytes) || ! str_starts_with($bytes, '%PDF-')) {
                 throw $this->failure(
