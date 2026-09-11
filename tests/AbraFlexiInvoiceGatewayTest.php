@@ -19,6 +19,7 @@ use PHPUnit\Framework\MockObject\Stub;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\LoggerInterface;
 use Psr\Log\NullLogger;
+use UnexpectedValueException;
 
 final class AbraFlexiInvoiceGatewayTest extends TestCase
 {
@@ -643,6 +644,7 @@ final class AbraFlexiInvoiceGatewayTest extends TestCase
         $client = $this->createStub(FakturaVydana::class);
         $client->method('sync')->willReturnCallback(static function () use ($client): bool {
             $client->lastResponseCode = 400;
+            $client->curlInfo = ['http_method' => 'PUT'];
             $client->lastCurlResponse = json_encode(['winstrom' => [
                 'errors' => [
                     ['for' => 'primUcet', 'message' => 'private@example.test'],
@@ -682,7 +684,11 @@ final class AbraFlexiInvoiceGatewayTest extends TestCase
             return 1;
         });
         $client->method('getDataValue')->willReturn(['ext:Accounting_Bridge:document.2026-0042:invoice']);
-        $client->method('getInFormat')->willThrowException(new LogicException('private PDF details'));
+        $client->method('getInFormat')->willReturnCallback(static function () use ($client): never {
+            $client->format = 'pdf';
+            throw new LogicException('private PDF details');
+        });
+        $client->method('setFormat')->willThrowException(new UnexpectedValueException('private cleanup details'));
         $logged = [];
         $logger = $this->createMock(LoggerInterface::class);
         $logger->expects(self::once())->method('log')->willReturnCallback(

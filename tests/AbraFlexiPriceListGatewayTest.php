@@ -103,6 +103,15 @@ final class AbraFlexiPriceListGatewayTest extends TestCase
         $gateway->findByCode('INCOMPLETE');
     }
 
+    public function test_empty_lookup_without_a_fresh_status_is_not_treated_as_missing(): void {
+        $client = $this->createStub(Cenik::class);
+        $client->lastResponseCode = 200;
+        $client->method('loadFromAbraFlexi')->willReturn(0);
+
+        $this->expectException(RuntimeException::class);
+        $this->gateway($client)->findByCode('SERVICE-90');
+    }
+
 
     public function test_invalid_code_is_rejected_before_accessing_abra(): void {
         $client = $this->createMock(Cenik::class);
@@ -118,13 +127,14 @@ final class AbraFlexiPriceListGatewayTest extends TestCase
 
         try {
             $this->gateway($client)->findByCode('SERVICE-90');
-            self::fail('The library exception should not cross the package adapter boundary.');
         } catch (RuntimeException $exception) {
             self::assertNull($exception->getPrevious());
             foreach (['api-password', 'customer@example.test', 'api-user', 'secret', 'private.example.test'] as $sensitive) {
                 self::assertStringNotContainsString($sensitive, $exception->getMessage());
             }
+            return;
         }
+        self::fail('The library exception should not cross the package adapter boundary.');
     }
 
     public function test_incomplete_price_data_is_rejected(): void {

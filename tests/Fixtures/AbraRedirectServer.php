@@ -49,6 +49,7 @@ final class AbraRedirectServer
         $forbiddenHits = 0;
         $invoice = null;
         $invoiceWrites = 0;
+        $invoiceRequests = [];
         $invoicePdf = self::defaultPdfBytes();
 
         while (true) {
@@ -83,12 +84,38 @@ final class AbraRedirectServer
                 ++$forbiddenHits;
             }
             $authorized = ($headers['authorization'] ?? '') === 'Basic ' . base64_encode('api-user:api-password');
+            $fault = $headers['x-fixture-fault'] ?? '';
+            if (str_contains($path, '/faktura-vydana')) {
+                $invoiceRequests[] = [
+                    'method' => $method,
+                    'accept' => $headers['accept'] ?? '',
+                    'contentType' => $headers['content-type'] ?? '',
+                ];
+            }
             $status = 200;
             $location = null;
             $pdf = null;
+            $rawBody = null;
             $data = ['method' => $method, 'body' => $body, 'authorized' => $authorized, 'forbiddenHits' => $forbiddenHits];
             if ( ! $authorized) {
                 $status = 401;
+            } elseif (str_contains($path, '/cenik/') && preg_match('/^price(200|202|204|401|403|404|500)$/D', $fault, $faultStatus) === 1) {
+                $status = (int) $faultStatus[1];
+                $rawBody = '';
+            } elseif ($method === 'PUT' && preg_match('/^write(400|409)$/D', $fault, $faultStatus) === 1) {
+                $status = (int) $faultStatus[1];
+                $data = ['winstrom' => ['success' => 'false', 'errors' => [
+                    ['for' => 'typDokl', 'message' => 'private@example.test api-password'],
+                ]]];
+            } elseif (str_contains($path, '/faktura-vydana') && ($headers['accept'] ?? '') === 'application/pdf') {
+                if ($fault === 'pdfdrop') {
+                    fclose($connection);
+                    continue;
+                }
+                $pdf = $invoicePdf;
+            } elseif ($fault === 'readback404' && preg_match('~/481(?:\.json)?$~', $path) === 1) {
+                $status = 404;
+                $data = ['winstrom' => ['success' => 'false']];
             } elseif ($method === 'PUT' && preg_match('~^/c/test_company/faktura-vydana(?:\.json)?$~', $path) === 1) {
                 $submitted = json_decode($body, true, flags: JSON_THROW_ON_ERROR)['winstrom']['faktura-vydana'];
                 $invoice = array_replace($submitted, [
@@ -110,6 +137,8 @@ final class AbraRedirectServer
             } elseif (preg_match('~^/c/test_company/cenik/code:MISSING(?:\.json)?$~', $path) === 1) {
                 $status = 404;
                 $data = ['winstrom' => ['success' => 'false']];
+            } elseif (preg_match('~^/c/test_company/cenik/code:EMPTY(?:\.json)?$~', $path) === 1) {
+                $data = ['winstrom' => ['cenik' => []]];
             } elseif (preg_match("~^/c/test_company/cenik/code:service' or kod ne 'other(?:\\.json)?$~", $path) === 1) {
                 $data = ['winstrom' => ['cenik' => [[
                     'id' => 43,
@@ -121,7 +150,7 @@ final class AbraRedirectServer
                     'typSzbDphK' => 'typSzbDph.dphZakl',
                 ]]]];
             } elseif ($path === '/invoice-state') {
-                $data = ['invoice' => $invoice, 'writes' => $invoiceWrites];
+                $data = ['invoice' => $invoice, 'writes' => $invoiceWrites, 'requests' => $invoiceRequests];
             } elseif (preg_match('~^/c/test_company/(faktura-vydana|cenik)/(?:code:ALIAS|ext:Accounting_Bridge:alias\.12:invoice)(?:\.json)?$~', $path) === 1) {
                 $status = 301;
                 $location = '42.json';
@@ -169,7 +198,7 @@ final class AbraRedirectServer
                     $status = 307;
                 }
             }
-            $responseBody = $pdf ?? ($location === null ? json_encode($data, JSON_THROW_ON_ERROR) : '');
+            $responseBody = $rawBody ?? $pdf ?? ($location === null ? json_encode($data, JSON_THROW_ON_ERROR) : '');
             $mediaType = $pdf === null ? 'application/json' : 'application/pdf';
             $response = 'HTTP/1.1 ' . $status . " Test\r\nContent-Type: " . $mediaType . "\r\nConnection: close\r\n";
             if ($location !== null) {

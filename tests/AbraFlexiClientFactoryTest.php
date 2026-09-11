@@ -15,6 +15,8 @@ use Lsr\AbraFlexi\AbraFlexiInvoiceGateway;
 use Lsr\AbraFlexi\AbraFlexiPriceListGateway;
 use Lsr\AbraFlexi\Dto\IssueInvoiceLine;
 use Lsr\AbraFlexi\Dto\IssueInvoiceRequest;
+use Lsr\AbraFlexi\Enums\InvoiceGatewayFailure;
+use Lsr\AbraFlexi\Exceptions\InvoiceGatewayException;
 use PHPUnit\Framework\Attributes\DataProvider;
 use PHPUnit\Framework\TestCase;
 use Psr\Log\NullLogger;
@@ -77,7 +79,7 @@ final class AbraFlexiClientFactoryTest extends TestCase
             proc_close(self::$server);
             self::$server = null;
         }
-        foreach (['openssl.cnf', 'server.pem', 'stderr.log', 'trace-stderr.log'] as $file) {
+        foreach (['openssl.cnf', 'server.pem', 'stderr.log', 'trace-stderr.log', 'auth-stderr.log'] as $file) {
             if (is_file(self::$directory . '/' . $file)) {
                 unlink(self::$directory . '/' . $file);
             }
@@ -238,35 +240,9 @@ final class AbraFlexiClientFactoryTest extends TestCase
         self::assertInstanceOf(FakturaVydana::class, $client);
         $gateway = new AbraFlexiInvoiceGateway($this->configuration(), new NullLogger(), $client);
         $externalId = 'ext:Accounting_Bridge:document.2026-0042:invoice';
+        $initialState = $this->invoiceState($client);
         self::assertNull($gateway->findByExternalId($externalId));
-        $invoice = $gateway->issue(new IssueInvoiceRequest(
-            orderNumber: 'INV 2026/0042',
-            recipientName: 'Private Recipient Name',
-            externalId: $externalId,
-            paymentMethodCode: null,
-            debitAccountCode: null,
-            creditAccountCode: null,
-            documentTypeCode: 'FAKTURA',
-            numberSeriesCode: null,
-            issuedOn: null,
-            taxPointOn: null,
-            dueOn: null,
-            currencyCode: 'GBP',
-            paymentReference: '2026000042',
-            lines: [new IssueInvoiceLine(
-                description: 'Invoice transport regression',
-                quantity: '1',
-                unitCode: null,
-                unitPriceMinor: 12100,
-                netAmountMinor: 10000,
-                vatAmountMinor: 2100,
-                grossAmountMinor: 12100,
-                priceTypeCode: 'typCeny.sDph',
-                vatRateTypeCode: 'typSzbDph.dphZakl',
-                vatRateBasisPoints: 2100,
-            )],
-            recipient: null,
-        ));
+        $invoice = $gateway->issue($this->invoiceRequest($externalId));
         self::assertSame('2026-09-05', $invoice->issuedOn->format('Y-m-d'));
         self::assertSame('INV 2026/0042', $client->getDataValue('cisObj'));
         self::assertSame('2026000042', $client->getDataValue('varSym'));
@@ -281,8 +257,206 @@ final class AbraFlexiClientFactoryTest extends TestCase
 
         $client->doCurlRequest(self::$origin . '/invoice-state', 'GET');
         $state = json_decode($client->lastCurlResponse, true, flags: JSON_THROW_ON_ERROR);
-        self::assertSame(1, $state['writes']);
+        self::assertSame($initialState['writes'] + 1, $state['writes']);
         self::assertSame('INV 2026/0042', $state['invoice']['cisObj']);
+    }
+
+    public function test_persisted_invoice_with_failed_readback_requires_reconciliation(): void {
+        $client = $this->client();
+        self::assertInstanceOf(FakturaVydana::class, $client);
+        $gateway = new AbraFlexiInvoiceGateway($this->configuration(), new NullLogger(), $client);
+        $request = $this->invoiceRequest('ext:fault:readback.404');
+        $before = $this->invoiceState($client);
+        $client->defaultHttpHeaders['X-Fixture-Fault'] = 'readback404';
+
+        try {
+            $gateway->issue($request);
+            self::fail('A failed readback must not imply a rejected or successful write.');
+        } catch (InvoiceGatewayException $exception) {
+            self::assertSame(InvoiceGatewayFailure::AmbiguousWrite, $exception->failure);
+            self::assertNull($exception->getPrevious());
+        }
+        unset($client->defaultHttpHeaders['X-Fixture-Fault']);
+
+        $recovered = $gateway->findByExternalId($request->externalId);
+        self::assertSame($request->externalId, $recovered?->externalId);
+        self::assertSame(12100, $recovered->grossAmountMinor);
+        self::assertSame($before['writes'] + 1, $this->invoiceState($client)['writes']);
+    }
+
+    #[DataProvider('rejectedWrites')]
+    public function test_actual_rejected_write_is_not_reported_as_persisted(int $status, InvoiceGatewayFailure $failure): void {
+        $client = $this->client();
+        self::assertInstanceOf(FakturaVydana::class, $client);
+        $gateway = new AbraFlexiInvoiceGateway($this->configuration(), new NullLogger(), $client);
+        $before = $this->invoiceState($client);
+        $client->defaultHttpHeaders['X-Fixture-Fault'] = 'write' . $status;
+
+        try {
+            $gateway->issue($this->invoiceRequest('ext:fault:rejected.' . $status));
+            self::fail('A provider rejection must remain a typed failure.');
+        } catch (InvoiceGatewayException $exception) {
+            self::assertSame($failure, $exception->failure);
+            self::assertNull($exception->getPrevious());
+            self::assertStringNotContainsString('api-password', $exception->getMessage());
+            self::assertStringNotContainsString('private@example.test', $exception->getMessage());
+        }
+        self::assertSame($before['writes'], $this->invoiceState($client)['writes']);
+    }
+
+    /** @return iterable<string, array{int, InvoiceGatewayFailure}> */
+    public static function rejectedWrites(): iterable {
+        yield 'invalid document' => [400, InvoiceGatewayFailure::RejectedRequest];
+        yield 'conflicting identity' => [409, InvoiceGatewayFailure::IdentityConflict];
+    }
+
+    public function test_failed_pdf_transport_preserves_subsequent_lookup_and_issue(): void {
+        $client = $this->client();
+        self::assertInstanceOf(FakturaVydana::class, $client);
+        $gateway = new AbraFlexiInvoiceGateway($this->configuration(), new NullLogger(), $client);
+        $request = $this->invoiceRequest('ext:fault:pdf.first');
+        $before = $this->invoiceState($client);
+        $gateway->issue($request);
+        $client->defaultHttpHeaders['X-Fixture-Fault'] = 'pdfdrop';
+
+        try {
+            $gateway->downloadPdf($request->externalId);
+            self::fail('The dropped PDF connection must propagate a transport failure.');
+        } catch (InvoiceGatewayException $exception) {
+            self::assertSame(InvoiceGatewayFailure::Retryable, $exception->failure);
+            self::assertSame(AbraFlexiException::class, $exception->causeType);
+            self::assertNull($exception->getPrevious());
+            self::assertStringNotContainsString('api-password', $exception->getMessage());
+            self::assertStringNotContainsString(self::$origin, $exception->getMessage());
+        }
+        unset($client->defaultHttpHeaders['X-Fixture-Fault']);
+        $afterFailure = $this->invoiceState($client);
+
+        self::assertSame($request->externalId, $gateway->findByExternalId($request->externalId)?->externalId);
+        $next = $this->invoiceRequest('ext:fault:pdf.second');
+        self::assertSame($next->externalId, $gateway->issue($next)->externalId);
+        $afterRecovery = $this->invoiceState($client);
+        self::assertSame($before['writes'] + 2, $afterRecovery['writes']);
+        foreach (array_slice($afterRecovery['requests'], count($afterFailure['requests'])) as $requestHeaders) {
+            self::assertSame('application/json', $requestHeaders['accept']);
+            self::assertSame('application/json', $requestHeaders['contentType']);
+        }
+        self::assertStringStartsWith('%PDF-', $gateway->downloadPdf($next->externalId)->bytes);
+    }
+
+    #[DataProvider('emptyPriceFailures')]
+    public function test_empty_http_price_failure_is_not_an_absent_item(int $status): void {
+        $client = $this->client(priceList: true);
+        self::assertInstanceOf(Cenik::class, $client);
+        $gateway = new AbraFlexiPriceListGateway($this->configuration(), new NullLogger(), $client);
+        self::assertSame(12100, $gateway->findByCode('ALIAS')?->priceAmountMinor);
+        $client->defaultHttpHeaders['X-Fixture-Fault'] = 'price' . $status;
+        $failure = null;
+
+        try {
+            $gateway->findByCode('ALIAS');
+        } catch (RuntimeException $exception) {
+            $failure = $exception;
+        }
+        self::assertNotNull($failure, 'A failed price lookup must not become item-not-found.');
+        self::assertNull($failure->getPrevious());
+        self::assertStringNotContainsString('api-password', $failure->getMessage());
+        self::assertStringNotContainsString(self::$origin, $failure->getMessage());
+        unset($client->defaultHttpHeaders['X-Fixture-Fault']);
+        self::assertSame(12100, $gateway->findByCode('ALIAS')?->priceAmountMinor);
+    }
+
+    /** @return iterable<string, array{int}> */
+    public static function emptyPriceFailures(): iterable {
+        yield 'authentication failure' => [401];
+        yield 'permission failure' => [403];
+        yield 'provider failure' => [500];
+        yield 'pending response' => [202];
+    }
+
+    #[DataProvider('emptyPriceResults')]
+    public function test_completed_empty_price_response_remains_absent(int $status): void {
+        $client = $this->client(priceList: true);
+        self::assertInstanceOf(Cenik::class, $client);
+        $gateway = new AbraFlexiPriceListGateway($this->configuration(), new NullLogger(), $client);
+        $client->defaultHttpHeaders['X-Fixture-Fault'] = 'price' . $status;
+        self::assertNull($gateway->findByCode('MISSING'));
+        unset($client->defaultHttpHeaders['X-Fixture-Fault']);
+        self::assertSame(12100, $gateway->findByCode('ALIAS')?->priceAmountMinor);
+        self::assertNull($gateway->findByCode('EMPTY'));
+    }
+
+    /** @return iterable<string, array{int}> */
+    public static function emptyPriceResults(): iterable {
+        yield 'successful empty body' => [200];
+        yield 'no content' => [204];
+        yield 'not found' => [404];
+    }
+
+    #[DataProvider('ambientSessionSources')]
+    public function test_configured_basic_authentication_ignores_ambient_sdk_sessions(bool $priceList, string $source): void {
+        $script = <<<'PHP'
+            if ($argv[1] === 'constant') {
+                putenv('ABRAFLEXI_AUTHSESSID');
+                define('ABRAFLEXI_AUTHSESSID', 'unrelated-session');
+            } else {
+                putenv('ABRAFLEXI_AUTHSESSID=unrelated-session');
+            }
+            require 'vendor/autoload.php';
+            $ambientEnvironment = getenv('ABRAFLEXI_AUTHSESSID');
+            $ambientConstant = defined('ABRAFLEXI_AUTHSESSID') ? constant('ABRAFLEXI_AUTHSESSID') : null;
+            $configuration = new Lsr\AbraFlexi\AbraFlexiConfiguration(
+                enabled: true,
+                apiUrl: $argv[3],
+                company: 'test_company',
+                username: 'api-user',
+                password: 'api-password',
+                currencyCode: 'GBP',
+                timeout: 3,
+            );
+            $factory = new Lsr\AbraFlexi\AbraFlexiClientFactory($configuration, new Psr\Log\NullLogger());
+            $client = $argv[2] === 'price-list' ? $factory->priceList() : $factory->issuedInvoice();
+            curl_setopt($client->curl, CURLOPT_NOPROXY, '*');
+            curl_setopt($client->curl, CURLOPT_CAINFO, $argv[4]);
+            curl_setopt($client->curl, CURLINFO_HEADER_OUT, true);
+            $client->doCurlRequest($argv[3] . '/echo', 'GET');
+            $echo = json_decode($client->lastCurlResponse, true, flags: JSON_THROW_ON_ERROR);
+            $headers = curl_getinfo($client->curl, CURLINFO_HEADER_OUT);
+            echo json_encode([
+                'status' => $client->lastResponseCode,
+                'authorized' => $echo['authorized'],
+                'requestCaptured' => is_string($headers) && $headers !== '',
+                'sessionHeaderPresent' => is_string($headers) && stripos($headers, 'X-authSessionId:') !== false,
+                'ambientUnchanged' => getenv('ABRAFLEXI_AUTHSESSID') === $ambientEnvironment
+                    && (defined('ABRAFLEXI_AUTHSESSID') ? constant('ABRAFLEXI_AUTHSESSID') : null) === $ambientConstant,
+            ], JSON_THROW_ON_ERROR);
+            PHP;
+        $process = proc_open([
+            PHP_BINARY, '-r', $script,
+            $source, $priceList ? 'price-list' : 'invoice',
+            self::$origin, self::$directory . '/server.pem',
+        ], [0 => ['file', '/dev/null', 'r'], 1 => ['pipe', 'w'], 2 => ['file', self::$directory . '/auth-stderr.log', 'w']], $pipes);
+        self::assertIsResource($process);
+        $output = stream_get_contents($pipes[1]);
+        fclose($pipes[1]);
+        $status = proc_close($process);
+        $errors = file_get_contents(self::$directory . '/auth-stderr.log');
+        self::assertSame(0, $status, 'The isolated SDK authentication request must succeed.');
+        self::assertTrue($errors === '', 'The SDK authentication request must not emit raw diagnostics.');
+        $result = json_decode((string) $output, true, flags: JSON_THROW_ON_ERROR);
+        self::assertSame(200, $result['status']);
+        self::assertTrue($result['authorized']);
+        self::assertTrue($result['requestCaptured']);
+        self::assertFalse($result['sessionHeaderPresent']);
+        self::assertTrue($result['ambientUnchanged']);
+    }
+
+    /** @return iterable<string, array{bool, string}> */
+    public static function ambientSessionSources(): iterable {
+        yield 'invoice environment' => [false, 'environment'];
+        yield 'invoice constant' => [false, 'constant'];
+        yield 'price list environment' => [true, 'environment'];
+        yield 'price list constant' => [true, 'constant'];
     }
 
     #[DataProvider('traceModes')]
@@ -348,6 +522,43 @@ final class AbraFlexiClientFactoryTest extends TestCase
         yield 'production opt-in' => [true, true, true];
         yield 'undefined environment opt-in' => [null, true, true];
         yield 'production default off' => [true, false, false];
+    }
+
+    private function invoiceRequest(string $externalId): IssueInvoiceRequest {
+        return new IssueInvoiceRequest(
+            orderNumber: 'INV 2026/0042',
+            recipientName: 'Private Recipient Name',
+            externalId: $externalId,
+            paymentMethodCode: null,
+            debitAccountCode: null,
+            creditAccountCode: null,
+            documentTypeCode: 'FAKTURA',
+            numberSeriesCode: null,
+            issuedOn: null,
+            taxPointOn: null,
+            dueOn: null,
+            currencyCode: 'GBP',
+            paymentReference: '2026000042',
+            lines: [new IssueInvoiceLine(
+                description: 'Invoice transport regression',
+                quantity: '1',
+                unitCode: null,
+                unitPriceMinor: 12100,
+                netAmountMinor: 10000,
+                vatAmountMinor: 2100,
+                grossAmountMinor: 12100,
+                priceTypeCode: 'typCeny.sDph',
+                vatRateTypeCode: 'typSzbDph.dphZakl',
+                vatRateBasisPoints: 2100,
+            )],
+            recipient: null,
+        );
+    }
+
+    /** @return array{invoice: array<string, mixed>|null, writes: int, requests: list<array{method: string, accept: string, contentType: string}>} */
+    private function invoiceState(RO $client): array {
+        $client->doCurlRequest(self::$origin . '/invoice-state', 'GET');
+        return json_decode($client->lastCurlResponse, true, flags: JSON_THROW_ON_ERROR);
     }
 
     private function client(bool $priceList = false, bool $trustFixtureCertificate = true): RO {
