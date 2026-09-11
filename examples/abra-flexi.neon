@@ -24,7 +24,7 @@ abraFlexi:
     pdfReportName: null
     pdfLanguage: null
     # Use an existing PSR-3 logger; otherwise a single LoggerInterface must autowire.
-    logger: '@logger'
+    logger: @logger
 
 # Registered types: AbraFlexiConfiguration, AbraFlexiClientFactory,
 # AbraFlexiInvoiceGateway, AbraFlexiPriceListGateway in Lsr\AbraFlexi.
