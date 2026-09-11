@@ -217,7 +217,7 @@ final class AbraFlexiInvoiceGateway
         $this->validateOptionalCode($line->unitCode, 'unit');
         $this->validatePrintable($line->priceTypeCode, 50, 'price type');
         $this->validatePrintable($line->vatRateTypeCode, 50, 'VAT rate type');
-        if (preg_match('/^(?:[1-9]\d*(?:\.\d{1,6})?|0\.\d{0,5}[1-9])$/', $line->quantity) !== 1) {
+        if (preg_match('/^(?:[1-9]\d*(?:\.\d{1,6})?|0\.\d{0,5}[1-9])$/D', $line->quantity) !== 1) {
             throw $this->rejected('The invoice line quantity is invalid.');
         }
         if (
