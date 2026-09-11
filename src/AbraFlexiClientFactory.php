@@ -38,6 +38,8 @@ final readonly class AbraFlexiClientFactory
             'company'        => $this->configuration->company,
             'user'           => $this->configuration->username,
             'password'       => $this->configuration->password,
+            // Prevent the SDK from replacing configured Basic credentials with an ambient session.
+            'authSessionId'  => '',
             'timeout'        => $this->configuration->timeout,
             'autoload'       => false,
             'debug'          => false,
