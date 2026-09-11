@@ -72,8 +72,8 @@ final class AbraFlexiValueMapper
     public static function decimalToMinor(mixed $value, string $field): int {
         if (is_int($value)) {
             $value = (string) $value;
-        } elseif (is_float($value) && is_finite($value)) {
-            $value = rtrim(rtrim(sprintf('%.6F', $value), '0'), '.');
+        } elseif (is_float($value) && is_finite($value) && $value >= 0) {
+            $value = sprintf('%.2F', round($value, 2, PHP_ROUND_HALF_UP));
         }
         if ( ! is_string($value) || preg_match('/^(\d+)(?:\.(\d+))?$/', trim($value), $matches) !== 1) {
             throw new InvoiceResponseMappingException($field, 'non-negative decimal amount', $value);
