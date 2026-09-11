@@ -1,0 +1,50 @@
+{
+  "name": "lsr/abra-flexi",
+  "description": "Typed ABRA Flexi invoice and price-list adapters with guarded SDK transport and Nette DI integration.",
+  "type": "library",
+  "license": "MIT",
+  "require": {
+    "php": ">=8.4",
+    "php-64bit": "*",
+    "ext-curl": "*",
+    "ext-json": "*",
+    "lib-curl": ">=7.85",
+    "guzzlehttp/psr7": "^2.7",
+    "nette/di": "^3.2",
+    "nette/schema": "^1.3",
+    "psr/http-message": "^1.1|^2.0",
+    "psr/log": "^3.0",
+    "spojenet/flexibee": "^3.7"
+  },
+  "require-dev": {
+    "ext-openssl": "*",
+    "ext-zlib": "*",
+    "friendsofphp/php-cs-fixer": "^3.95",
+    "phpstan/phpstan": "^2.0",
+    "phpunit/phpunit": "^12|^13"
+  },
+  "autoload": {
+    "psr-4": {
+      "Lsr\\AbraFlexi\\": "src/"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "Tests\\": "tests/"
+    }
+  },
+  "scripts": {
+    "test": "php vendor/bin/phpunit",
+    "phpstan": "vendor/bin/phpstan analyse --memory-limit=1G",
+    "cs:fix": "vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.php",
+    "cbf": "@cs:fix",
+    "cs": "vendor/bin/php-cs-fixer fix --config=.php-cs-fixer.php --dry-run --diff"
+  },
+  "authors": [
+    {
+      "name": "Tomáš Vojík",
+      "email": "vojik@esoul.cz"
+    }
+  ],
+  "minimum-stability": "stable"
+}
