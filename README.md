@@ -107,9 +107,9 @@ Using the `$priceList` gateway above:
 $item = $priceList->findByCode('SERVICE-90');
 ```
 
-The result is a [PriceListItem](src/Dto/PriceListItem.php), or `null` when the lookup yields no record. It exposes the code, name, currency, gross and net price amounts (`priceAmountMinor` and `netPriceAmountMinor`), and provider price/VAT type codes. Lookup trims surrounding whitespace and accepts an optional `code:` prefix. The remaining code must contain 1–64 printable bytes and is sent as an encoded literal selector, not filter syntax.
+The result is a [PriceListItem](src/Dto/PriceListItem.php), or `null` when a fresh HTTP 200, 204, or 404 response establishes an empty or missing record. It exposes the code, name, currency, gross and net price amounts (`priceAmountMinor` and `netPriceAmountMinor`), and provider price/VAT type codes. Lookup trims surrounding whitespace and accepts an optional `code:` prefix. The remaining code must contain 1–64 printable bytes and is sent as an encoded literal selector, not filter syntax.
 
-Invalid lookup input raises `InvalidArgumentException`; unavailable configuration or SDK failures raise `RuntimeException`; incomplete or malformed price data raises `UnexpectedValueException`. Price-list errors do not use the invoice failure enum. SDK exception messages and previous-exception chains are not forwarded.
+Invalid lookup input raises `InvalidArgumentException`; unavailable configuration or SDK failures raise `RuntimeException`; incomplete or malformed price data raises `UnexpectedValueException`. Other HTTP statuses or a missing response status remain failures even when the response body is empty. Price-list errors do not use the invoice failure enum. SDK exception messages and previous-exception chains are not forwarded.
 
 ## Issue an invoice
 
@@ -178,6 +178,8 @@ $pdf = $invoices->downloadPdf($request->externalId);
 
 Lookup returns `IssuedInvoice|null`. PDF download returns [InvoicePdf](src/Dto/InvoicePdf.php) with `bytes` and `mediaType`; it verifies the invoice identity and a `%PDF-` prefix. It does not perform full PDF parsing, write a file, calculate a storage hash, or deliver the document. Storage, access control, and delivery remain application responsibilities.
 
+A failed PDF transport does not leave the gateway in PDF mode: the prior SDK format is restored, or the unusable client is discarded. Cleanup preserves the original sanitized download failure.
+
 Invoice operations throw [InvoiceGatewayException](src/Exceptions/InvoiceGatewayException.php). Inspect its `failure` enum rather than matching message text:
 
 | Failure | Application response |
@@ -189,10 +191,13 @@ Invoice operations throw [InvoiceGatewayException](src/Exceptions/InvoiceGateway
 | `IdentityConflict` | Investigate an identity, requested-data mismatch, or missing invoice during PDF retrieval. Do not overwrite blindly. |
 | `InvalidResponse` | Investigate malformed/incompatible provider data. After issuance, reconcile rather than assuming no write occurred. |
 
+When the SDK write/readback call fails, only a rejection observed on the write itself is definitive. A failed readback, including HTTP 404 after an accepted HTTP 201 write, produces `AmbiguousWrite`.
+
 `issue()` does not perform a lookup-first deduplication check, and the package does not guarantee exactly-once execution. Persist request intent and identity, serialize competing operations in the application, and compare recovered invoices against the expected accounting snapshot. A failed or temporarily empty lookup after an ambiguous write is not proof that creating another invoice is safe. Do not generate a new identity merely because a request timed out. PDF failures likewise do not justify reissuing an invoice.
 
 ## Transport and logging
 
+- Factory-created SDK clients use the configured Basic credentials. Ambient `ABRAFLEXI_AUTHSESSID` environment variables or constants cannot replace that authentication identity.
 - Factory-created SDK clients verify TLS by default. Redirects are bounded to three hops and restricted to HTTPS on the same host and port, without embedded credentials. Write method/body semantics are preserved; a write redirect that would switch to GET is rejected.
 - Diagnostics use sanitized metadata, bounded allowlists, and hashed document references. `traceCurl` is an explicit opt-in independent of application environment mode; it is not a raw request/response dump.
 - Never log or dump configuration, credentials, SDK client objects, invoice requests, or PDF bytes. Application logging outside these adapters needs its own redaction policy.
