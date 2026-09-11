@@ -39,10 +39,9 @@ class AbraFlexiPriceListGateway
         try {
             $client = $this->client();
             $client->dataReset();
-            $loaded = $client->loadFromAbraFlexi([
-                'kod'    => $normalizedCode,
-                'detail' => 'full',
-            ]);
+            $client->defaultUrlParams['detail'] = 'full';
+            // Encode the whole selector to bypass the SDK's filter DSL and code normalization.
+            $loaded = $client->loadFromAbraFlexi(rawurlencode('code:' . $normalizedCode));
         } catch (Throwable) {
             // SDK exceptions can contain credentials, URLs, and raw response bodies.
             throw new RuntimeException('ABRA Flexi price-list lookup failed.');
