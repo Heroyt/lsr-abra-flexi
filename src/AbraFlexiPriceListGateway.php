@@ -39,6 +39,7 @@ class AbraFlexiPriceListGateway
         try {
             $client = $this->client();
             $client->dataReset();
+            $client->lastResponseCode = null;
             $client->defaultUrlParams['detail'] = 'full';
             // Encode the whole selector to bypass the SDK's filter DSL and code normalization.
             $loaded = $client->loadFromAbraFlexi(rawurlencode('code:' . $normalizedCode));
@@ -48,6 +49,11 @@ class AbraFlexiPriceListGateway
         }
 
         if ($loaded === 0) {
+            // An empty HTTP error body bypasses the SDK's exception handling.
+            if ( ! in_array($client->lastResponseCode, [200, 204, 404], true)) {
+                throw new RuntimeException('ABRA Flexi price-list lookup failed.');
+            }
+
             return null;
         }
 
