@@ -71,16 +71,11 @@ final class AbraFlexiInvoiceGateway
             try {
                 $issued = $client->sync();
             } catch (Throwable $exception) {
-                // sync() includes a write and readback; a thrown call cannot prove the write outcome.
-                throw $this->failure(
-                    InvoiceGatewayFailure::AmbiguousWrite,
-                    'The ABRA Flexi invoice write outcome is unknown.',
-                    $exception,
-                );
+                throw $this->writeFailure($client, $exception);
             }
 
             if ( ! $issued) {
-                throw $this->writeFailure($client->lastResponseCode ?? 0);
+                throw $this->writeFailure($client);
             }
 
             $this->logInvoiceRead(InvoiceFailureStage::Create, $client, $request->externalId, $request->orderNumber);
@@ -473,20 +468,30 @@ final class AbraFlexiInvoiceGateway
         return $this->failure(InvoiceGatewayFailure::RejectedRequest, $message);
     }
 
-    private function writeFailure(int $responseCode): InvoiceGatewayException {
+    private function writeFailure(FakturaVydana $client, ?Throwable $cause = null): InvoiceGatewayException {
+        // sync() may end with GET readback; only an observed write response can prove rejection.
+        $responseCode = in_array($client->curlInfo['http_method'] ?? null, ['PUT', 'POST'], true)
+            ? ($client->lastResponseCode ?? 0)
+            : 0;
         if ($responseCode === 409) {
             return $this->failure(
                 InvoiceGatewayFailure::IdentityConflict,
                 'ABRA Flexi rejected the invoice identity.',
+                $cause,
             );
         }
         if ($responseCode >= 400 && $responseCode < 500 && ! in_array($responseCode, [408, 429], true)) {
-            return $this->rejected('ABRA Flexi rejected the invoice request.');
+            return $this->failure(
+                InvoiceGatewayFailure::RejectedRequest,
+                'ABRA Flexi rejected the invoice request.',
+                $cause,
+            );
         }
 
         return $this->failure(
             InvoiceGatewayFailure::AmbiguousWrite,
             'The ABRA Flexi invoice write outcome is unknown.',
+            $cause,
         );
     }
 
