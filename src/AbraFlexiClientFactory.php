@@ -96,7 +96,9 @@ final readonly class AbraFlexiClientFactory
             if ($location === '') {
                 return 0;
             }
-            $current = new Uri((string) curl_getinfo($curl, CURLINFO_EFFECTIVE_URL));
+            // Older libcurl versions add HTTP-auth credentials to the effective URL.
+            // Reject credentials supplied by Location, not those inherited from the base URL.
+            $current = (new Uri((string) curl_getinfo($curl, CURLINFO_EFFECTIVE_URL)))->withUserInfo('');
             $target = UriResolver::resolve($current, new Uri($location));
             if (
                 $target->getScheme() !== 'https'
